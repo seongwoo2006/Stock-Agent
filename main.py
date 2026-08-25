@@ -5,7 +5,6 @@ from email.mime.text import MIMEText
 import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands
-from GoogleNews import GoogleNews
 
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL")
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
@@ -35,23 +34,29 @@ def send_email(subject, body):
     except Exception as e:
         print(f"❌ 이메일 발송 실패: {e}")
 
-# 구글 뉴스 검색 함수
-def get_recent_news(keyword):
+# Yahoo Finance 뉴스 가져오기 함수 (안정성 극대화)
+def get_yf_news(ticker_obj):
     try:
-        googlenews = GoogleNews(lang='en', period='3d') # 최근 3일간 영문 기사 검색
-        googlenews.search(f"{keyword} stock news")
-        results = googlenews.result()
+        news_list = ticker_obj.news
+        if not news_list:
+            return "    📰 관련 최신 기사 없음"
         
-        news_text = []
-        for item in results[:2]: # 상위 2개 기사만 추출
-            title = item.get('title', '')
-            link = item.get('link', '')
+        formatted_news = []
+        for item in news_list[:2]: # 상위 2개 추출
+            # yfinance 버전별 데이터 구조 대응
+            content = item.get('content', item) if isinstance(item, dict) else item
+            title = content.get('title', '')
+            
+            # 링크 추출
+            click_url = content.get('clickThroughUrl', {})
+            link = click_url.get('url', '') if isinstance(click_url, dict) else content.get('link', '')
+            
             if title:
-                news_text.append(f"    📰 {title}\n       🔗 {link}")
+                formatted_news.append(f"    📰 {title}\n       🔗 {link if link else '링크 없음'}")
         
-        return "\n".join(news_text) if news_text else "    📰 관련 최신 기사 없음"
-    except Exception:
-        return "    📰 기사 검색 실패"
+        return "\n".join(formatted_news) if formatted_news else "    📰 관련 최신 기사 없음"
+    except Exception as e:
+        return f"    📰 기사 불러오기 실패 ({e})"
 
 def get_past_price(df, days_ago):
     if len(df) > days_ago:
@@ -68,7 +73,8 @@ signals = []
 
 for ticker_symbol in TICKERS:
     try:
-        data = yf.Ticker(ticker_symbol).history(period="1y")
+        ticker_obj = yf.Ticker(ticker_symbol)
+        data = ticker_obj.history(period="1y")
         if data.empty:
             continue
 
@@ -111,10 +117,9 @@ for ticker_symbol in TICKERS:
             signals.append(f"{ticker_symbol} 매도 검토 (RSI {current_rsi:.1f})")
             need_news = True
 
-        # 기사 정보 덧붙이기
         news_section = ""
         if need_news:
-            news_section = "\n  - [특이 신호 관련 주요 뉴스]\n" + get_recent_news(ticker_symbol) + "\n"
+            news_section = "\n  - [특이 신호 관련 주요 뉴스]\n" + get_yf_news(ticker_obj) + "\n"
 
         line = (
             f"• {ticker_symbol}\n"
